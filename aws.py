@@ -979,41 +979,37 @@ else:
         
         # GitHub repository settings
         st.subheader("📂 Repository Configuration")
-        col1, col2 = st.columns([2, 1])
+        
+        # Quick path selection buttons
+        st.write("**Quick Select:**")
+        col1, col2, col3 = st.columns(3)
         with col1:
-            repo_path = st.text_input(
-                "Repository Path",
-                value=st.session_state.get('selected_repo_path', "/Users/truxx/Sandeep/Project"),
-                help="Local path to your GitHub repository"
-            )
+            if st.button("🏠 Home Directory"):
+                st.session_state.selected_repo_path = os.path.expanduser('~')
+                st.rerun()
         with col2:
-            st.write("")
-            st.write("")
-            if st.button("📁 Browse", help="Open native file dialog to select directory"):
-                try:
-                    import tkinter as tk
-                    from tkinter import filedialog
-                    
-                    # Create root window and hide it
-                    root = tk.Tk()
-                    root.withdraw()
-                    root.attributes('-topmost', True)
-                    
-                    # Open directory dialog
-                    selected_dir = filedialog.askdirectory(
-                        title="Select Repository Directory",
-                        initialdir=st.session_state.get('selected_repo_path', os.path.expanduser('~'))
-                    )
-                    
-                    root.destroy()
-                    
-                    if selected_dir:
-                        st.session_state.selected_repo_path = selected_dir
-                        st.rerun()
-                except ImportError:
-                    st.error("Native file dialog not available. Please enter path manually.")
-                except Exception as e:
-                    st.error(f"Error opening file dialog: {e}")
+            if st.button("📁 Current Project"):
+                st.session_state.selected_repo_path = "/Users/truxx/Sandeep/Project"
+                st.rerun()
+        with col3:
+            if st.button("💼 Desktop"):
+                st.session_state.selected_repo_path = os.path.expanduser('~/Desktop')
+                st.rerun()
+        
+        # Manual path input
+        repo_path = st.text_input(
+            "Repository Path",
+            value=st.session_state.get('selected_repo_path', "/Users/truxx/Sandeep/Project"),
+            help="Enter the full path to your repository directory"
+        )
+        
+        # Path validation
+        if repo_path:
+            if os.path.exists(repo_path) and os.path.isdir(repo_path):
+                st.success(f"✓ Valid directory: {repo_path}")
+                st.session_state.selected_repo_path = repo_path
+            else:
+                st.error(f"✗ Directory not found: {repo_path}")
         
         file_extensions = st.multiselect(
             "File Extensions to Scan",
@@ -1022,9 +1018,8 @@ else:
             help="Select file types to search for database references"
         )
         
-        # Update repo_path from session state if changed
-        if st.session_state.get('selected_repo_path') != repo_path:
-            repo_path = st.session_state.get('selected_repo_path', repo_path)
+        # Update repo_path from session state
+        repo_path = st.session_state.get('selected_repo_path', repo_path)
         
         # Analysis options
         st.subheader("🎯 Analysis Options")
