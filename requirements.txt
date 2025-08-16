@@ -6,3 +6,4 @@ psycopg2-binary
 mysql-connector-python 
 graphviz
 awscli
+session-manager-plugin
