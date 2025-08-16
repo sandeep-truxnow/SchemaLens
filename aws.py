@@ -256,10 +256,7 @@ if connect_btn:
         if not success:
             st.sidebar.error(f"❌ Tunnel failed: {result}")
             if "aws: not found" in str(result) or "SessionManagerPlugin is not found" in str(result):
-                if "SessionManagerPlugin" in str(result):
-                    st.sidebar.warning("🔌 AWS Session Manager Plugin missing in Streamlit Cloud. Attempting direct connection...")
-                else:
-                    st.sidebar.warning("🌐 AWS CLI not available in Streamlit Cloud. Attempting direct connection...")
+                st.sidebar.warning("☁️ Streamlit Cloud doesn't support AWS SSM tunneling. Attempting direct connection...")
                 # Try direct connection to RDS endpoint
                 try:
                     rds_host = ENVIRONMENTS[environment]['host']
