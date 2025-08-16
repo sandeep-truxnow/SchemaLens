@@ -279,28 +279,36 @@ if connect_btn:
         engine = create_engine(f"mysql+mysqlconnector://{username}:{password}@{host}:{local_port}")
         
         st.sidebar.info("🔌 Testing database connection...")
-        with engine.connect() as conn:
-            st.sidebar.info("✅ Database connected, fetching schemas...")
-            q = "show databases"
-            dbs_df = read_sql_df(conn, q)
-            db_col = dbs_df.columns[0]
-            st.session_state.available_schemas = [db for db in dbs_df[db_col].tolist() if db not in ('information_schema', 'performance_schema', 'mysql', 'sys')]
-            
-            st.session_state.engine = engine
-            st.session_state.connected = True
-            st.session_state.connection_params = {
-                'db_type': db_type,
-                'host': host,
-                'port': port,
-                'username': username,
-                'password': password,
-                'environment': environment
-            }
-            st.sidebar.success(f"✅ Connected! Found {len(st.session_state.available_schemas)} schemas/databases.")
-            
-            # Initialize empty cache - load on demand
-            st.session_state.schema_metadata = {}
-            st.sidebar.info("💾 Metadata cache initialized - schemas will load on demand")
+        try:
+            with engine.connect() as conn:
+                st.sidebar.info("✅ Database connected, fetching schemas...")
+                q = "show databases"
+                dbs_df = read_sql_df(conn, q)
+                db_col = dbs_df.columns[0]
+                st.session_state.available_schemas = [db for db in dbs_df[db_col].tolist() if db not in ('information_schema', 'performance_schema', 'mysql', 'sys')]
+                
+                st.session_state.engine = engine
+                st.session_state.connected = True
+                st.session_state.connection_params = {
+                    'db_type': db_type,
+                    'host': host,
+                    'port': port,
+                    'username': username,
+                    'password': password,
+                    'environment': environment
+                }
+                st.sidebar.success(f"✅ Connected! Found {len(st.session_state.available_schemas)} schemas/databases.")
+                
+                # Initialize empty cache - load on demand
+                st.session_state.schema_metadata = {}
+                st.sidebar.info("💾 Metadata cache initialized - schemas will load on demand")
+        except Exception as conn_error:
+            if "Connection timed out" in str(conn_error) or "Can't connect" in str(conn_error):
+                st.sidebar.error("❌ Direct RDS connection failed - database not publicly accessible")
+                st.sidebar.warning("🏠 This app requires local execution with AWS CLI for database access")
+                st.sidebar.info("💡 Run locally: streamlit run aws.py")
+            else:
+                raise conn_error
     except Exception as e:
         st.sidebar.error(f"❌ Connection failed: {e}")
         st.session_state.connected = False
