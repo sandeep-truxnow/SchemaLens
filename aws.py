@@ -171,6 +171,7 @@ with st.sidebar.expander("📋 Setup Instructions", expanded=True):
     if st.button("⚙️ Set AWS Credentials"):
         if aws_credentials.strip():
             try:
+                credentials_set = []
                 for line in aws_credentials.strip().split('\n'):
                     if line.strip().startswith('export '):
                         # Parse export AWS_ACCESS_KEY_ID="value" format
@@ -180,8 +181,12 @@ with st.sidebar.expander("📋 Setup Instructions", expanded=True):
                             # Remove quotes from value
                             value = value.strip('"\'')
                             os.environ[key] = value
+                            credentials_set.append(key)
                 
-                st.success("✅ AWS credentials set successfully!")
+                if credentials_set:
+                    st.success(f"✅ AWS credentials set successfully! ({', '.join(credentials_set)})")
+                else:
+                    st.warning("⚠️ No valid credentials found in export format")
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error setting AWS credentials: {e}")
