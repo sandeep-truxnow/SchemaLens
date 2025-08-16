@@ -257,19 +257,15 @@ if connect_btn:
             st.sidebar.error(f"❌ Tunnel failed: {result}")
             if "aws: not found" in str(result):
                 st.sidebar.warning("🌐 AWS CLI not available in Streamlit Cloud. Attempting direct connection...")
-                # Try direct connection without tunnel for demo purposes
+                # Try direct connection to RDS endpoint
                 try:
-                    direct_host = ENVIRONMENTS[environment].get('direct_host')
-                    direct_port = ENVIRONMENTS[environment].get('direct_port', 3306)
-                    if direct_host:
-                        st.sidebar.info(f"🔗 Attempting direct connection to {direct_host}:{direct_port}")
-                        local_port = direct_port
-                        host = direct_host
-                    else:
-                        st.sidebar.error("❌ No direct connection available for this environment")
-                        st.stop()
+                    rds_host = ENVIRONMENTS[environment]['host']
+                    rds_port = 3306  # Standard MySQL port for RDS
+                    st.sidebar.info(f"🔗 Attempting direct connection to {rds_host}:{rds_port}")
+                    local_port = rds_port
+                    host = rds_host
                 except Exception as e:
-                    st.sidebar.error(f"❌ Direct connection failed: {e}")
+                    st.sidebar.error(f"❌ Direct connection setup failed: {e}")
                     st.stop()
             else:
                 st.sidebar.error("💡 Try running locally for full functionality.")
