@@ -254,15 +254,33 @@ if connect_btn:
         st.sidebar.info(f"✅ AWS credentials found: {aws_access_key[:8]}...")
         success, result = execute_reconnect_scripts(environment, ENVIRONMENTS)
         if not success:
-            st.sidebar.error(f"❌ Failed to establish tunnel: {result}")
-            if "not found" in str(result).lower():
-                st.sidebar.error("💡 This may be due to Streamlit Cloud limitations. Try running locally.")
-            st.stop()
-        local_port = result
+            st.sidebar.error(f"❌ Tunnel failed: {result}")
+            if "aws: not found" in str(result):
+                st.sidebar.warning("🌐 AWS CLI not available in Streamlit Cloud. Attempting direct connection...")
+                # Try direct connection without tunnel for demo purposes
+                try:
+                    direct_host = ENVIRONMENTS[environment].get('direct_host')
+                    direct_port = ENVIRONMENTS[environment].get('direct_port', 3306)
+                    if direct_host:
+                        st.sidebar.info(f"🔗 Attempting direct connection to {direct_host}:{direct_port}")
+                        local_port = direct_port
+                        host = direct_host
+                    else:
+                        st.sidebar.error("❌ No direct connection available for this environment")
+                        st.stop()
+                except Exception as e:
+                    st.sidebar.error(f"❌ Direct connection failed: {e}")
+                    st.stop()
+            else:
+                st.sidebar.error("💡 Try running locally for full functionality.")
+                st.stop()
+        else:
+            local_port = result
+            host = "localhost"
         st.sidebar.info("✅ Tunnel established, connecting to database...")
         
-        # Use the returned local port
-        engine = create_engine(f"mysql+mysqlconnector://{username}:{password}@localhost:{local_port}")
+        # Use the returned local port and host
+        engine = create_engine(f"mysql+mysqlconnector://{username}:{password}@{host}:{local_port}")
         
         st.sidebar.info("🔌 Testing database connection...")
         with engine.connect() as conn:
