@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 # Import services
 from services.database_service import load_schema_metadata, execute_reconnect_scripts, read_sql_df
-from services.code_analysis_service import analyze_table_impact, analyze_column_impact, find_unused_objects
+from services.git_analysis_service import GitAnalysisService, CodeImpactAnalyzer
 from services.erd_service import (
     fetch_columns, fetch_primary_keys, fetch_foreign_keys, 
     fetch_indexes, fetch_row_counts, build_graph
@@ -156,22 +156,37 @@ def display_unused_objects_results(results):
         st.dataframe(unused_columns_df, use_container_width=True)
         st.caption(f"Showing first {len(results['unused_columns'])} unused columns")
 
+
+
 # AWS Credentials Setup Instructions
 st.sidebar.header("🔧 AWS Setup")
 with st.sidebar.expander("📋 Setup Instructions", expanded=True):
-    st.markdown("**Enter your AWS credentials below:**")
+    aws_credentials = st.text_area(
+        "AWS Credentials",
+        placeholder="export AWS_ACCESS_KEY_ID=\"AAAA\"\nexport AWS_SECRET_ACCESS_KEY=\"XXXXX\"\nexport AWS_SESSION_TOKEN=\"YYYY\"",
+        help="Enter your AWS credentials in export format",
+        height=100
+    )
     
-    access_key = st.text_input("AWS Access Key ID", key="access_key")
-    secret_key = st.text_input("AWS Secret Access Key", type="password", key="secret_key")
-    session_token = st.text_area("AWS Session Token", height=100, key="session_token")
-    
-    if access_key and secret_key and session_token:
-        if st.button("⚙️ Set AWS Credentials"):
-            os.environ['AWS_ACCESS_KEY_ID'] = access_key
-            os.environ['AWS_SECRET_ACCESS_KEY'] = secret_key
-            os.environ['AWS_SESSION_TOKEN'] = session_token
-            st.success("✅ AWS credentials set successfully!")
-            st.rerun()
+    if st.button("⚙️ Set AWS Credentials"):
+        if aws_credentials.strip():
+            try:
+                for line in aws_credentials.strip().split('\n'):
+                    if line.strip().startswith('export '):
+                        # Parse export AWS_ACCESS_KEY_ID="value" format
+                        line = line.strip()[7:]  # Remove 'export '
+                        if '=' in line:
+                            key, value = line.split('=', 1)
+                            # Remove quotes from value
+                            value = value.strip('"\'')
+                            os.environ[key] = value
+                
+                st.success("✅ AWS credentials set successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error setting AWS credentials: {e}")
+        else:
+            st.warning("⚠️ Please enter AWS credentials.")
 
 st.sidebar.header("🔐 Connection")
 environment = st.sidebar.selectbox("Environment", ["QA", "UAT"])
@@ -687,9 +702,41 @@ else:
             # Display available tables and columns
             if tables:
                 with st.expander("📊 Available Tables & Columns", expanded=False):
+                    # Separate active and unused tables
+                    active_tables = []
+                    unused_tables = []
+                    
                     for table in tables:
-                        cols = all_columns.get(table, [])
-                        st.write(f"**{table}**: {', '.join(cols[:5])}{'...' if len(cols) > 5 else ''}")
+                        info = table_info.get(table, {})
+                        last_update = info.get('last_update')
+                        
+                        # Check if table is unused (same logic as ERD filtering)
+                        table_lower = table.lower()
+                        is_enum_table = any(pattern in table_lower for pattern in [
+                            'status', 'type', 'category', 'enum', 'lookup', 'reference', 
+                            'config', 'setting', 'option', 'code', 'list', 'reason'
+                        ])
+                        
+                        if is_enum_table or (last_update and not pd.isna(last_update) and 
+                                           str(last_update).lower() not in ['nat', 'none', 'null', 'unknown']):
+                            active_tables.append(table)
+                        else:
+                            unused_tables.append(table)
+                    
+                    # Display active tables first
+                    if active_tables:
+                        st.markdown("**🟢 Active Tables:**")
+                        for table in sorted(active_tables):
+                            cols = all_columns.get(table, [])
+                            st.write(f"**{table}**: {', '.join(sorted(cols)[:5])}{'...' if len(cols) > 5 else ''}")
+                    
+                    # Display unused tables with separator
+                    if unused_tables:
+                        st.markdown("---")
+                        st.markdown("**🔴 Unused Tables:**")
+                        for table in sorted(unused_tables):
+                            cols = all_columns.get(table, [])
+                            st.write(f"**{table}**: {', '.join(sorted(cols)[:5])}{'...' if len(cols) > 5 else ''}")
                 
                 # Display table usage info
                 if table_info:
@@ -714,17 +761,39 @@ else:
             else:
                 st.warning(f"No tables found in {query_schema}")
         else:
-            tables, all_columns = [], {}
+            tables, all_columns, table_info = [], {}, {}
 
-        # Query input
+        # Query input with smart suggestions
         st.subheader("Write your SQL query:")
+        
+        # Create smart help text with table.column suggestions
+        if tables and all_columns:
+            suggestions = []
+            for table in sorted(tables)[:3]:  # Show top 3 tables
+                cols = sorted(all_columns.get(table, []))[:3]  # Show top 3 columns
+                suggestions.append(f"{table}.{cols[0]}" if cols else table)
+            help_text = f"Available: {', '.join(suggestions)}... (Type table_name. to see columns)"
+        else:
+            help_text = "Select schema first to see available tables and columns"
+        
         query = st.text_area(
             "SQL Query",
             value=st.session_state.last_query,
             height=150,
             placeholder=f"SELECT * FROM {tables[0] if tables else 'table_name'} LIMIT 10;",
-            help="Write your SQL query. Available tables: " + (", ".join(tables[:5]) + ("..." if len(tables) > 5 else "") if tables else "Select schema first")
+            help=help_text
         )
+        
+        # Smart column suggestions display
+        if tables and all_columns and query:
+            # Look for table_name. pattern in query
+            import re
+            table_dot_matches = re.findall(r'\b(\w+)\.$', query.split('\n')[-1])
+            if table_dot_matches:
+                suggested_table = table_dot_matches[-1]
+                if suggested_table in all_columns:
+                    cols = sorted(all_columns[suggested_table])
+                    st.info(f"💡 **{suggested_table}** columns: {', '.join(cols[:10])}{'...' if len(cols) > 10 else ''}")
         
         col1, col2 = st.columns([1, 4])
         with col1:
@@ -838,23 +907,31 @@ else:
                 with st.expander(f"Connect to {env2}", expanded=False):
                     st.info(f"🔧 Independent connection to {env2} on port {ENVIRONMENTS[env2]['local_port']}")
                     st.warning(f"⚠️ Ensure {env2} instance is running and you have valid credentials")
-                    access_key2 = st.text_input("AWS Access Key ID", key="access_key2")
-                    secret_key2 = st.text_input("AWS Secret Access Key", type="password", key="secret_key2")
-                    session_token2 = st.text_area("AWS Session Token", height=80, key="session_token2")
+                    aws_credentials2 = st.text_area(
+                        "AWS Credentials",
+                        placeholder="export AWS_ACCESS_KEY_ID=\"AAAA\"\nexport AWS_SECRET_ACCESS_KEY=\"XXXXX\"\nexport AWS_SESSION_TOKEN=\"YYYY\"",
+                        help="Enter your AWS credentials in export format",
+                        height=100,
+                        key="aws_creds2"
+                    )
                     
                     if st.button(f"🔗 Connect to {env2}", key="connect2"):
-                        if access_key2 and secret_key2 and session_token2:
+                        if aws_credentials2.strip():
                             try:
-                                # Set environment variables for this connection
-                                os.environ['AWS_ACCESS_KEY_ID'] = access_key2
-                                os.environ['AWS_SECRET_ACCESS_KEY'] = secret_key2
-                                os.environ['AWS_SESSION_TOKEN'] = session_token2
+                                # Parse and set environment variables
+                                for line in aws_credentials2.strip().split('\n'):
+                                    if line.strip().startswith('export '):
+                                        line = line.strip()[7:]  # Remove 'export '
+                                        if '=' in line:
+                                            key, value = line.split('=', 1)
+                                            value = value.strip('"\'')
+                                            os.environ[key] = value
                                 
-                                # Establish tunnel with specific credentials
+                                # Establish tunnel with parsed credentials
                                 aws_creds = {
-                                    'access_key': access_key2,
-                                    'secret_key': secret_key2,
-                                    'session_token': session_token2
+                                    'access_key': os.environ.get('AWS_ACCESS_KEY_ID'),
+                                    'secret_key': os.environ.get('AWS_SECRET_ACCESS_KEY'),
+                                    'session_token': os.environ.get('AWS_SESSION_TOKEN')
                                 }
                                 success, result = execute_reconnect_scripts(env2, ENVIRONMENTS, aws_creds)
                                 if success:
@@ -891,7 +968,7 @@ else:
                             except Exception as e:
                                 st.error(f"❌ Connection failed: {str(e)}")
                         else:
-                            st.warning("Please fill in all credentials")
+                            st.warning("Please enter AWS credentials in export format")
             else:
                 st.success(f"✅ Connected to {env2}")
                 if st.button(f"Disconnect {env2}", key="disconnect2"):
@@ -909,7 +986,11 @@ else:
                 schema1 = st.selectbox(f"Schema from {env1}", schemas1, key="schema1")
             with col2:
                 schemas2 = st.session_state.env_schemas.get(env2, [])
-                schema2 = st.selectbox(f"Schema from {env2}", schemas2, key="schema2")
+                # Auto-select matching schema if available
+                default_index = 0
+                if schema1 and schema1 in schemas2:
+                    default_index = schemas2.index(schema1)
+                schema2 = st.selectbox(f"Schema from {env2}", schemas2, index=default_index, key="schema2")
             
             if st.button("🔍 Compare Schemas"):
                 if schema1 and schema2:
@@ -977,62 +1058,23 @@ else:
         st.header("🔍 Code Impact Analysis")
         st.caption("Analyze which services reference database tables/columns and find unused database objects")
         
-        # GitHub repository settings
-        st.subheader("📂 Repository Configuration")
-        
-        # Quick path selection buttons
-        st.write("**Quick Select:**")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("🏠 Home Directory"):
-                st.session_state.selected_repo_path = os.path.expanduser('~')
-                st.rerun()
-        with col2:
-            if st.button("📁 Current Project"):
-                st.session_state.selected_repo_path = "/Users/truxx/Sandeep/Project"
-                st.rerun()
-        with col3:
-            if st.button("💼 Desktop"):
-                st.session_state.selected_repo_path = os.path.expanduser('~/Desktop')
-                st.rerun()
-        
-        # Manual path input
-        repo_path = st.text_input(
-            "Repository Path",
-            value=st.session_state.get('selected_repo_path', "/Users/truxx/Sandeep/Project"),
-            help="Enter the full path to your repository directory"
-        )
-        
-        # Path validation
-        if repo_path:
-            if os.path.exists(repo_path) and os.path.isdir(repo_path):
-                st.success(f"✓ Valid directory: {repo_path}")
-                st.session_state.selected_repo_path = repo_path
-            else:
-                st.error(f"✗ Directory not found: {repo_path}")
-        
-        file_extensions = st.multiselect(
-            "File Extensions to Scan",
-            options=[".java", ".py", ".js", ".ts", ".sql", ".xml", ".yml", ".yaml"],
-            default=[".java", ".py", ".sql"],
-            help="Select file types to search for database references"
-        )
-        
-        # Update repo_path from session state
-        repo_path = st.session_state.get('selected_repo_path', repo_path)
-        
-        # Analysis options
-        st.subheader("🎯 Analysis Options")
+        # Analysis Configuration (at the top)
+        st.subheader("🎯 Analysis Configuration")
         col1, col2 = st.columns(2)
         with col1:
             analysis_type = st.radio(
                 "Analysis Type",
-                ["Table Impact Analysis", "Column Impact Analysis", "Unused Objects Detection"]
+                ["Table Impact Analysis", "Column Impact Analysis", "Unused Objects Detection"],
+                key="analysis_type_selection"
             )
         with col2:
             if analysis_type in ["Table Impact Analysis", "Column Impact Analysis"]:
                 if st.session_state.available_schemas:
-                    selected_schema = st.selectbox("Schema", st.session_state.available_schemas)
+                    selected_schema = st.selectbox(
+                        "Schema", 
+                        st.session_state.available_schemas,
+                        key="selected_schema_analysis"
+                    )
                     
                     # Load schema metadata if not cached
                     cache_key = f"{st.session_state.connection_params.get('environment', 'QA')}_{selected_schema}"
@@ -1045,47 +1087,272 @@ else:
                     tables = schema_data.get('tables', [])
                     
                     if analysis_type == "Table Impact Analysis":
-                        target_table = st.selectbox("Select Table", tables)
+                        target_table = st.selectbox(
+                            "Select Table", 
+                            tables,
+                            key="target_table_analysis"
+                        )
                     else:
-                        target_table = st.selectbox("Select Table", tables)
+                        target_table = st.selectbox(
+                            "Select Table", 
+                            tables,
+                            key="target_table_column_analysis"
+                        )
                         if target_table:
                             columns = schema_data.get('columns', {}).get(target_table, [])
-                            target_column = st.selectbox("Select Column", columns)
+                            target_column = st.selectbox(
+                                "Select Column", 
+                                columns,
+                                key="target_column_analysis"
+                            )
         
-        # Run analysis
-        if st.button("🔍 Run Analysis", type="primary"):
-            if not os.path.exists(repo_path):
-                st.error("Repository path does not exist")
-            elif not file_extensions:
-                st.error("Please select at least one file extension")
+        file_extensions = st.multiselect(
+            "File Extensions to Scan",
+            options=[".java", ".py", ".js", ".ts", ".sql", ".xml", ".yml", ".yaml"],
+            default=[".java", ".py", ".sql"],
+            help="Select file types to search for database references",
+            key="file_extensions_analysis"
+        )
+        
+        # Repository Configuration
+        st.subheader("📂 Repository Configuration")
+        
+        # Repository source selection
+        repo_source = st.radio(
+            "Repository Source",
+            ["Git Repository (Remote)", "Local Directory"],
+            help="Choose between remote Git repository or local directory"
+        )
+        
+        if repo_source == "Git Repository (Remote)":
+            st.write("**Git Repository Settings**")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                git_provider = st.selectbox(
+                    "Git Provider",
+                    ["GitHub", "GitLab", "Bitbucket", "Azure DevOps", "Custom"]
+                )
+            with col2:
+                clone_method = st.selectbox(
+                    "Clone Method",
+                    ["HTTPS (Public)", "HTTPS (Token)", "SSH"]
+                )
+            
+            # Repository URL input
+            if git_provider == "GitHub":
+                analysis_scope = st.radio(
+                    "Analysis Scope",
+                    ["Single Repository", "Entire Organization"],
+                    help="Choose to analyze one repository or all repositories in an organization"
+                )
+                
+                if analysis_scope == "Single Repository":
+                    repo_url = st.text_input(
+                        "Repository URL",
+                        placeholder="https://github.com/username/repository.git",
+                        help="GitHub repository URL"
+                    )
+                else:
+                    org_name = st.text_input(
+                        "Organization Name",
+                        placeholder="company-name",
+                        help="GitHub organization name (without https://github.com/)"
+                    )
+                    repo_url = f"https://github.com/{org_name}" if org_name else ""
+                    
+                    st.warning("⚠️ Organization analysis requires authentication. Please provide your GitHub Personal Access Token below.")
+            elif git_provider == "GitLab":
+                repo_url = st.text_input(
+                    "Repository URL",
+                    placeholder="https://gitlab.com/username/repository.git",
+                    help="GitLab repository URL"
+                )
+            elif git_provider == "Bitbucket":
+                repo_url = st.text_input(
+                    "Repository URL",
+                    placeholder="https://bitbucket.org/username/repository.git",
+                    help="Bitbucket repository URL"
+                )
+            elif git_provider == "Azure DevOps":
+                repo_url = st.text_input(
+                    "Repository URL",
+                    placeholder="https://dev.azure.com/org/project/_git/repository",
+                    help="Azure DevOps repository URL"
+                )
             else:
-                try:
-                    with st.spinner("Scanning repository..."):
-                        if analysis_type == "Table Impact Analysis":
-                            results = analyze_table_impact(repo_path, target_table, file_extensions)
-                            display_table_impact_results(results, target_table)
-                        elif analysis_type == "Column Impact Analysis":
-                            results = analyze_column_impact(repo_path, target_table, target_column, file_extensions)
-                            display_column_impact_results(results, target_table, target_column)
-                        else:  # Unused Objects Detection
-                            if st.session_state.available_schemas:
-                                all_tables = set()
-                                all_columns = set()
-                                for schema in st.session_state.available_schemas:
-                                    cache_key = f"{st.session_state.connection_params.get('environment', 'QA')}_{schema}"
-                                    if cache_key not in st.session_state.get('schema_metadata', {}):
-                                        schema_data = load_schema_metadata(schema, st.session_state.connection_params)
-                                        st.session_state.schema_metadata[cache_key] = schema_data
-                                    else:
-                                        schema_data = st.session_state.schema_metadata[cache_key]
-                                    
-                                    for table in schema_data.get('tables', []):
-                                        all_tables.add(f"{schema}.{table}")
-                                        for col in schema_data.get('columns', {}).get(table, []):
-                                            all_columns.add(f"{schema}.{table}.{col}")
+                repo_url = st.text_input(
+                    "Repository URL",
+                    placeholder="https://your-git-server.com/repo.git",
+                    help="Custom Git repository URL"
+                )
+            
+            # Authentication for private repos and organization analysis
+            git_token = None
+            
+            # Show token input for HTTPS (Token) or GitHub organization analysis
+            if clone_method == "HTTPS (Token)" or (git_provider == "GitHub" and analysis_scope == "Entire Organization"):
+                token_help = "Personal access token for private repositories"
+                if git_provider == "GitHub" and analysis_scope == "Entire Organization":
+                    token_help = "GitHub Personal Access Token (REQUIRED for organization analysis)"
+                
+                # Use token from environment if available
+                default_token = os.getenv('GIT_TOKEN') or os.getenv('GITHUB_TOKEN') or ''
+                git_token = st.text_input(
+                    "Access Token",
+                    value=default_token,
+                    type="password",
+                    help=token_help + " (Auto-loaded from environment if available)"
+                )
+                
+                if git_provider == "GitHub" and analysis_scope == "Entire Organization":
+                    st.info("💡 To create a GitHub token: Settings → Developer settings → Personal access tokens → Generate new token (classic) → Select 'repo' scope")
+            
+            elif clone_method == "SSH":
+                st.info("🔑 SSH key authentication - ensure SSH keys are configured on the server")
+            
+            # Branch selection
+            git_branch = st.text_input(
+                "Branch",
+                value="main",
+                help="Git branch to clone (default: main)"
+            )
+            
+            # Show repository status
+            if git_provider == "GitHub" and analysis_scope == "Entire Organization":
+                if org_name and git_token:
+                    st.success(f"✓ Ready to analyze organization: {org_name}")
+                elif org_name and not git_token:
+                    st.warning("⚠️ GitHub token required for organization analysis")
+                elif not org_name:
+                    st.info("📝 Enter organization name above")
+            else:
+                if repo_url:
+                    st.success(f"✓ Ready to analyze repository: {repo_url}")
+                else:
+                    st.info("📝 Enter repository URL above")
+        
+        else:  # Local Directory
+            st.write("**Local Directory Settings**")
+            
+            # Quick path selection buttons
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("🏠 Home Directory"):
+                    st.session_state.selected_repo_path = os.path.expanduser('~')
+                    st.rerun()
+            with col2:
+                if st.button("📁 Current Project"):
+                    st.session_state.selected_repo_path = "/Users/truxx/Sandeep/Project"
+                    st.rerun()
+            with col3:
+                if st.button("💼 Desktop"):
+                    st.session_state.selected_repo_path = os.path.expanduser('~/Desktop')
+                    st.rerun()
+            
+            # Manual path input
+            repo_path = st.text_input(
+                "Local Directory Path",
+                value=st.session_state.get('selected_repo_path', "/Users/truxx/Sandeep/Project"),
+                help="Enter the full path to your local repository directory"
+            )
+            
+            # Path validation
+            if repo_path:
+                if os.path.exists(repo_path) and os.path.isdir(repo_path):
+                    st.success(f"✓ Valid directory: {repo_path}")
+                    st.session_state.selected_repo_path = repo_path
+                else:
+                    st.error(f"✗ Directory not found: {repo_path}")
+        
+
+        
+        # Get final repo configuration
+        if repo_source == "Git Repository (Remote)":
+            repo_path = None
+            # Prepare remote repo config for analysis
+            if git_provider == "GitHub" and analysis_scope == "Entire Organization":
+                repo_config = {'type': 'github_org', 'org_name': org_name, 'branch': git_branch, 'token': git_token} if org_name and git_token else None
+            else:
+                repo_config = {'type': 'git_repo', 'url': repo_url, 'branch': git_branch, 'token': git_token} if repo_url else None
+        else:
+            repo_path = st.session_state.get('selected_repo_path', repo_path)
+            repo_config = None
+        
+
+        
+        # Single Run Analysis button
+        if st.button("🔍 Run Analysis", type="primary", key="run_analysis_btn"):
+            # Validate inputs
+            if repo_source == "Git Repository (Remote)":
+                if not repo_config:
+                    st.error("Please configure repository settings above")
+                    st.stop()
+            else:
+                if not repo_path or not os.path.exists(repo_path):
+                    st.error("Please select a valid local directory")
+                    st.stop()
+            
+            if not file_extensions:
+                st.error("Please select at least one file extension")
+                st.stop()
+            
+            try:
+                analyzer = CodeImpactAnalyzer()
+                
+                # Step 1: Get repository data (if remote)
+                if repo_source == "Git Repository (Remote)":
+                    with st.spinner("Fetching repository data..."):
+                        git_service = GitAnalysisService(repo_config['token'])
+                        
+                        if repo_config['type'] == 'github_org':
+                            start_time = time.time()
+                            repo_data = git_service.analyze_organization(repo_config['org_name'], repo_config['branch'])
+                            analysis_time = time.time() - start_time
+                            st.info(f"⏱️ Repository fetch completed in {analysis_time:.1f} seconds")
+                            st.info(f"📊 Scanned {repo_data.get('total_repos', 0)} active repositories and downloaded {len(repo_data['files'])} source code files for analysis")
+                        else:
+                            repo_data = git_service.analyze_repository(repo_config['url'], repo_config['branch'])
+                            st.info(f"📊 Downloaded {len(repo_data['files'])} source code files from repository for analysis")
+                else:
+                    repo_data = None
+                
+                # Step 2: Analyze code for database references
+                with st.spinner("Analyzing database references..."):
+                    if analysis_type == "Table Impact Analysis":
+                        if repo_source == "Git Repository (Remote)":
+                            results = analyzer.analyze_table_impact_api(repo_data, target_table, file_extensions)
+                        else:
+                            results = analyzer.analyze_table_impact_local(repo_path, target_table, file_extensions)
+                        display_table_impact_results(results, target_table)
+                    elif analysis_type == "Column Impact Analysis":
+                        if repo_source == "Git Repository (Remote)":
+                            results = analyzer.analyze_column_impact_api(repo_data, target_table, target_column, file_extensions)
+                        else:
+                            results = analyzer.analyze_column_impact_local(repo_path, target_table, target_column, file_extensions)
+                        display_column_impact_results(results, target_table, target_column)
+                    else:  # Unused Objects Detection
+                        if st.session_state.available_schemas:
+                            all_tables = set()
+                            all_columns = set()
+                            for schema in st.session_state.available_schemas:
+                                cache_key = f"{st.session_state.connection_params.get('environment', 'QA')}_{schema}"
+                                if cache_key not in st.session_state.get('schema_metadata', {}):
+                                    schema_data = load_schema_metadata(schema, st.session_state.connection_params)
+                                    st.session_state.schema_metadata[cache_key] = schema_data
+                                else:
+                                    schema_data = st.session_state.schema_metadata[cache_key]
                                 
-                                results = find_unused_objects(repo_path, all_tables, all_columns, file_extensions)
-                                display_unused_objects_results(results)
-                except Exception as e:
-                    st.error(f"Analysis failed: {str(e)}")
+                                for table in schema_data.get('tables', []):
+                                    all_tables.add(f"{schema}.{table}")
+                                    for col in schema_data.get('columns', {}).get(table, []):
+                                        all_columns.add(f"{schema}.{table}.{col}")
+                            
+                            if repo_source == "Git Repository (Remote)":
+                                results = analyzer.find_unused_objects_api(repo_data, all_tables, all_columns, file_extensions)
+                            else:
+                                results = analyzer.find_unused_objects_local(repo_path, all_tables, all_columns, file_extensions)
+                            display_unused_objects_results(results)
+            except Exception as e:
+                st.error(f"Analysis failed: {str(e)}")
 
