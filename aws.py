@@ -185,9 +185,12 @@ with st.sidebar.expander("📋 Setup Instructions", expanded=True):
                 
                 if credentials_set:
                     st.success(f"✅ AWS credentials set successfully! ({', '.join(credentials_set)})")
+                    # Force display before rerun
+                    time.sleep(1)
                 else:
                     st.warning("⚠️ No valid credentials found in export format")
-                st.rerun()
+                # Remove rerun to keep success message visible
+                # st.rerun()
             except Exception as e:
                 st.error(f"❌ Error setting AWS credentials: {e}")
         else:
