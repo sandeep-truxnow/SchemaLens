@@ -242,10 +242,23 @@ if connect_btn:
     st.sidebar.info(f"🔗 Attempting connection to {environment} environment")
     try:
         st.sidebar.info("🚇 Setting up tunnel first...")
-        success, local_port = execute_reconnect_scripts(environment, ENVIRONMENTS)
-        if not success:
-            st.sidebar.error("❌ Failed to establish tunnel")
+        # Check if AWS credentials are set
+        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY') 
+        aws_session_token = os.environ.get('AWS_SESSION_TOKEN')
+        
+        if not all([aws_access_key, aws_secret_key, aws_session_token]):
+            st.sidebar.error("❌ AWS credentials not set. Please set credentials first.")
             st.stop()
+        
+        st.sidebar.info(f"✅ AWS credentials found: {aws_access_key[:8]}...")
+        success, result = execute_reconnect_scripts(environment, ENVIRONMENTS)
+        if not success:
+            st.sidebar.error(f"❌ Failed to establish tunnel: {result}")
+            if "not found" in str(result).lower():
+                st.sidebar.error("💡 This may be due to Streamlit Cloud limitations. Try running locally.")
+            st.stop()
+        local_port = result
         st.sidebar.info("✅ Tunnel established, connecting to database...")
         
         # Use the returned local port
