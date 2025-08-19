@@ -169,9 +169,9 @@ def _filter_and_process_tables(all_data, sel_schemas):
     exclusion_key = f"excluded_tables_{'_'.join(sorted(sel_schemas))}"
     st.session_state[exclusion_key] = excluded_details
     
-    # Show table statistics
+    # Store table statistics for display
     total_tables = len(tables)
-    st.info(f"✅ Total tables in schema: {total_tables}")
+    st.session_state[f"total_tables_{'_'.join(sorted(sel_schemas))}"] = total_tables
     
     # Show exclusion info
     if excluded_details:
@@ -240,8 +240,8 @@ def _is_enum_table(table_name):
     return any(pattern in table_lower for pattern in [
         'status', 'type', 'category', 'enum', 'lookup', 'reference', 
         'config', 'setting', 'option', 'code', 'list', 'reason', 
-        'complete_by', 'job_truck_unit', 'dispath_ordrer', 'attribiute', 
-        'transcription_field', 'entity_note'
+        'complete_by', 'job_truck_unit', 'dispatch_order', 'attribute', 
+        'transcription_field', 'entity_note', 'equipment_attribute'
     ])
 
 
@@ -330,9 +330,17 @@ def _store_erd_data(dot, filtered_data, include_row_counts, execution_time):
     st.session_state.erd_generated = True
 
 
-def _display_generation_results(sel_schemas, execution_time):
+def _display_generation_results(sel_schemas, execution_time, total_tables=0):
     """Display ERD generation results"""
     st.success(f"✅ ERD generated successfully in {execution_time:.2f} seconds!")
+    
+    # Display total tables count
+    total_tables_key = f"total_tables_{'_'.join(sorted(sel_schemas))}"
+    if total_tables_key in st.session_state:
+        total_tables = st.session_state[total_tables_key]
+    
+    if total_tables > 0:
+        st.info(f"📊 Total tables in schema ({', '.join(sel_schemas)}): {total_tables}")
     
     # Calculate and display schema sizes
     schema_sizes = _calculate_schema_sizes(sel_schemas)

@@ -142,7 +142,9 @@ def _categorize_tables(tables, table_info):
         table_lower = table.lower()
         is_enum_table = any(pattern in table_lower for pattern in [
             'status', 'type', 'category', 'enum', 'lookup', 'reference', 
-            'config', 'setting', 'option', 'code', 'list', 'reason'
+            'config', 'setting', 'option', 'code', 'list', 'reason',
+            # below are added to include specific enum tables
+            'complete_by', 'job_truck_unit', 'dispatch_order', 'attribute', 'transcription_field', 'entity_note', 'equipment_attribute'
         ])
         
         if is_enum_table or (last_update and not pd.isna(last_update) and 
