@@ -13,6 +13,12 @@ ENVIRONMENTS = {
         "host": "uat-ecs-prod-cluster-2024-09-26-9-55-am-mst-cluster.cluster-cpjdjlxf8yyr.us-west-2.rds.amazonaws.com",
         "region": "us-west-2",
         "local_port": "3308"
+    },
+    "PROD": {
+        "target": "i-06d45207a10bdca28",
+        "host": "ecs-prod-db-cluster.cluster-ro-c8lvt6dvdsj6.us-east-2.rds.amazonaws.com",
+        "region": "us-east-2",
+        "local_port": "3309"
     }
 }
 
